@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from pydantic import BaseModel
 import httpx
 import os
@@ -9,6 +9,7 @@ from prefect.client.orchestration import PrefectClient
 from prefect.exceptions import ObjectNotFound
 from uuid import UUID
 from typing import List, Dict, Any
+from datetime import datetime # <-- Missing import added
 
 # Add shared directory to path
 sys.path.append('/app/shared')
@@ -28,6 +29,14 @@ class PipelineTrigger(BaseModel):
 # --- FastAPI App Initialization ---
 app = FastAPI()
 
+# --- DEBUGGING MIDDLEWARE ---
+# This will print the exact path of every request the API receives.
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    print(f"--> API receiving request for path: {request.url.path}")
+    response = await call_next(request)
+    return response
+
 # --- Global Configuration & Client ---
 PREFECT_API_URL = os.environ.get('PREFECT_API_URL', 'http://prefect-server:4200/api')
 prefect_client = PrefectClient(api=PREFECT_API_URL)
@@ -42,7 +51,7 @@ async def trigger_nhs_pipeline(trigger: PipelineTrigger):
     print("--- Endpoint /nhs-data/trigger-pipeline HIT ---")
     try:
         # NOTE: The deployment name is now just the flow name, as defined in worker.py
-        deployment = await prefect_client.read_deployment_by_name("Data Pipeline Flow")
+        deployment = await prefect_client.read_deployment_by_name("nhs-bed-occupancy-pipeline-flow/Data Pipeline Flow")
         
         flow_run = await prefect_client.create_flow_run_from_deployment(
             deployment_id=deployment.id,
@@ -57,7 +66,7 @@ async def trigger_nhs_pipeline(trigger: PipelineTrigger):
             "status_url": f"/nhs-data/status/{flow_run.id}"
         }
     except ObjectNotFound:
-         raise HTTPException(status_code=404, detail="Deployment 'Data Pipeline Flow' not found. Please wait for the worker to initialize.")
+         raise HTTPException(status_code=404, detail="Deployment 'nhs-bed-occupancy-pipeline-flow/Data Pipeline Flow' not found. Please wait for the worker to initialize.")
     except Exception as e:
         print(f"ERROR: Could not trigger pipeline. Reason: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -138,7 +147,7 @@ async def upload_nhs_file(file: UploadFile = File(...)):
         print(f"SUCCESS: File uploaded to MinIO as {object_name}")
         
         # Trigger processing pipeline with MinIO URL
-        deployment = await prefect_client.read_deployment_by_name("Data Pipeline Flow")
+        deployment = await prefect_client.read_deployment_by_name("nhs-bed-occupancy-pipeline-flow/Data Pipeline Flow")
         
         flow_run = await prefect_client.create_flow_run_from_deployment(
             deployment_id=deployment.id,

@@ -38,6 +38,11 @@ def trigger_pipeline(url: str) -> Dict[str, Any]:
     """Trigger NHS data processing pipeline"""
     try:
         api_url = f"{API_BASE_URL}/nhs-data/trigger-pipeline"
+        
+        # --- DEBUGGING LINE ---
+        # This will show the exact URL being called in the Streamlit UI
+        st.info(f"--> Streamlit is sending request to URL: {api_url}")
+        
         response = requests.post(api_url, json={"url": url})
         response.raise_for_status()
         return response.json()

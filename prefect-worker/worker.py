@@ -25,7 +25,7 @@ async def create_deployments():
         logger.info("Building deployments...")
         nhs_deployment = await Deployment.build_from_flow(
             flow=nhs_bed_occupancy_pipeline_flow,
-            name="nhs-bed-occupancy-pipeline-deployment",
+            name="Data Pipeline Flow",
             # --- THIS IS THE FIX ---
             # Use work_pool_name to explicitly match the worker's pool.
             work_pool_name="default"

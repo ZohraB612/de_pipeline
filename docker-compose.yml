@@ -2,9 +2,9 @@ services:
   # FastAPI Application Service
   api:
     build: ./api
-    command: uvicorn app:app --host 0.0.0.0 --port 5000
+    command: uvicorn app:app --host 0.0.0.0 --port 5001 --reload
     ports:
-      - "5001:5000"
+      - "5001:5001"
     environment:
       - PREFECT_API_URL=http://prefect-server:4200/api
       - DATABASE_URL=postgresql://user:password@db:5432/mydatabase
@@ -13,6 +13,7 @@ services:
       - MINIO_SECRET_KEY=minioadmin
       - FLOW_RUN_TIMEOUT=180
     volumes:
+      - ./api:/app
       - ./shared:/app/shared
     depends_on:
       prefect-server:
@@ -22,8 +23,7 @@ services:
       minio:
         condition: service_healthy
     healthcheck:
-      # Use python/requests for the healthcheck as curl is not in the base image
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/health', timeout=5).raise_for_status()"]
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5001/health', timeout=5).raise_for_status()"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -88,8 +88,7 @@ services:
   # Prefect Worker Service
   prefect-worker:
     build: ./prefect-worker
-    # This command correctly creates the work pool before starting the worker
-    command: sh -c "prefect work-pool create 'default' --type process && python worker.py && prefect worker start --pool default"
+    command: sh -c "prefect work-pool create 'default' --type process || true && prefect worker start --pool 'default'"
     environment:
       - PREFECT_API_URL=http://prefect-server:4200/api
       - DATABASE_URL=postgresql://user:password@db:5432/mydatabase
@@ -104,20 +103,21 @@ services:
       minio:
         condition: service_healthy
     volumes:
+      - ./prefect-worker:/app # <-- ADD THIS LINE
       - ./shared:/app/shared
 
-  # Streamlit UI Service
+  # Streamlit Frontend Service
   streamlit:
     build: ./streamlit_app
     ports:
       - "8501:8501"
     environment:
-      - API_BASE_URL=http://api:5000
+      - API_BASE_URL=http://api:5001
+    volumes:
+      - ./streamlit_app:/app # <-- ADD THIS LINE
     depends_on:
       api:
         condition: service_healthy
-    volumes:
-      - ./streamlit_app:/app
 
 volumes:
   postgres_data:
