@@ -366,99 +366,141 @@ if url.startswith("minio://"):
 
 ## Data Flow Architecture
 
-### End-to-End Data Pipeline
+The NHS Bed Occupancy Analytics platform uses a **3-step data processing pattern** that handles both file uploads and URL downloads through a unified pipeline.
 
-The platform implements a robust, event-driven data pipeline where **all data flows through MinIO storage** before processing, ensuring data persistence, traceability, and scalable processing capabilities.
+### Overview: The 3-Step Data Processing Pattern
 
-#### File Upload Data Flow
 ```mermaid
-sequenceDiagram
-    participant U as User
-    participant S as Streamlit App
-    participant API as FastAPI
-    participant M as MinIO Storage
-    participant PS as Prefect Server
-    participant PW as Prefect Worker
-    participant DB as PostgreSQL
-
-    Note over U,DB: File Upload Scenario
-    U->>S: Upload Excel File (.xlsx/.xls)
-    S->>API: POST /nhs-data/upload
-    Note over API: Validate file format
-    API->>M: Store file in MinIO (nhs_uploads/)
-    M-->>API: File stored (minio://bucket/path)
-    API->>PS: Trigger pipeline with MinIO URL
-    PS->>PW: Execute workflow with MinIO reference
+graph LR
+    A[📁 Data Input] --> B[🔄 Processing] --> C[📊 Analytics]
     
-    Note over PW: Data Processing Phase
-    PW->>M: Download file from MinIO storage
-    M-->>PW: Excel file data
-    PW->>PW: Parse Excel & transform data
-    PW->>PW: Validate & clean data
-    PW->>DB: Batch insert processed records
-    DB-->>PW: Insert confirmation
-    PW-->>PS: Workflow completed successfully
-    PS-->>API: Flow run status update
-    API-->>S: Success response with flow ID
-    S-->>U: Upload confirmation + pipeline status
+    subgraph A [📁 Data Input]
+        A1[File Upload via Streamlit]
+        A2[NHS URL via Streamlit]
+    end
+    
+    subgraph B [🔄 Processing]
+        B1[Store in MinIO]
+        B2[Prefect Pipeline]
+        B3[Save to PostgreSQL]
+    end
+    
+    subgraph C [📊 Analytics]
+        C1[FastAPI Data Access]
+        C2[Streamlit Dashboard]
+    end
+    
+    A1 --> B1
+    A2 --> B2
+    B1 --> B2
+    B2 --> B3
+    B3 --> C1
+    C1 --> C2
+    
+    classDef input fill:#e3f2fd
+    classDef process fill:#fff3e0
+    classDef output fill:#e8f5e8
+    class A,A1,A2 input
+    class B,B1,B2,B3 process
+    class C,C1,C2 output
 ```
 
-#### URL Download Data Flow
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant S as Streamlit App
-    participant API as FastAPI
-    participant PS as Prefect Server
-    participant PW as Prefect Worker
-    participant EXT as External NHS Source
-    participant DB as PostgreSQL
+### Detailed Data Flow Scenarios
 
-    Note over U,DB: URL Download Scenario
-    U->>S: Enter NHS Data URL
-    S->>API: POST /nhs-data/trigger-pipeline
-    Note over API: Validate URL format
-    API->>PS: Trigger pipeline with external URL
-    PS->>PW: Execute workflow with URL reference
+The platform handles two main data input scenarios with the same processing pipeline:
+
+#### Scenario 1: File Upload Processing
+**Purpose**: User uploads an Excel file through the web interface
+
+```mermaid
+flowchart TD
+    U[👤 User] --> S[🌐 Streamlit]
+    S --> API[⚡ FastAPI]
+    API --> M[📦 MinIO Storage]
+    API --> P[🔄 Prefect Pipeline]
+    P --> M
+    P --> DB[🗄️ PostgreSQL]
+    S --> API2[📊 Dashboard Access]
+    API2 --> DB
     
-    Note over PW: Data Acquisition & Processing
-    PW->>EXT: Download Excel file from NHS URL
-    EXT-->>PW: Excel file data
-    PW->>PW: Parse Excel & transform data
-    PW->>PW: Validate & clean data
-    PW->>DB: Batch insert processed records
-    DB-->>PW: Insert confirmation
-    PW-->>PS: Workflow completed successfully
-    PS-->>API: Flow run status update
-    API-->>S: Success response with flow ID
-    S-->>U: Download confirmation + pipeline status
+    U -.->|1. Upload Excel File| S
+    S -.->|2. Send File| API
+    API -.->|3. Store File| M
+    API -.->|4. Trigger Processing| P
+    P -.->|5. Retrieve & Process| M
+    P -.->|6. Save Results| DB
+    S -.->|7. View Data| API2
+    API2 -.->|8. Query Results| DB
+    
+    classDef user fill:#ffebee
+    classDef frontend fill:#e3f2fd
+    classDef api fill:#fff3e0
+    classDef storage fill:#e8f5e8
+    classDef process fill:#f3e5f5
+    classDef database fill:#fce4ec
+    
+    class U user
+    class S frontend
+    class API,API2 api
+    class M storage
+    class P process
+    class DB database
 ```
 
-#### Data Access Flow
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant S as Streamlit App
-    participant API as FastAPI
-    participant DB as PostgreSQL
+#### Scenario 2: URL Download Processing  
+**Purpose**: User provides an NHS data URL for automatic download and processing
 
-    Note over U,DB: Data Visualization & Analytics
-    U->>S: Access Dashboard
-    S->>API: GET /nhs-data/occupancy
-    API->>DB: Query processed bed occupancy data
-    DB-->>API: Return formatted records
-    API-->>S: JSON response with data
-    S->>S: Generate interactive visualizations
-    S-->>U: Rendered charts & analytics
+```mermaid
+flowchart TD
+    U[👤 User] --> S[🌐 Streamlit]
+    S --> API[⚡ FastAPI]
+    API --> P[🔄 Prefect Pipeline]
+    P --> EXT[🌍 NHS Data Source]
+    P --> DB[🗄️ PostgreSQL]
+    S --> API2[📊 Dashboard Access]
+    API2 --> DB
     
-    Note over U,S: Real-time Pipeline Monitoring
-    U->>S: Check Pipeline Status
-    S->>API: GET /nhs-data/status/{flow_run_id}
-    API->>PS: Query flow run status
-    PS-->>API: Return execution details
-    API-->>S: Status information
-    S-->>U: Pipeline execution status
+    U -.->|1. Enter NHS URL| S
+    S -.->|2. Send URL| API
+    API -.->|3. Trigger Processing| P
+    P -.->|4. Download from URL| EXT
+    P -.->|5. Save Results| DB
+    S -.->|6. View Data| API2
+    API2 -.->|7. Query Results| DB
+    
+    classDef user fill:#ffebee
+    classDef frontend fill:#e3f2fd
+    classDef api fill:#fff3e0
+    classDef external fill:#fff8e1
+    classDef process fill:#f3e5f5
+    classDef database fill:#fce4ec
+    
+    class U user
+    class S frontend
+    class API,API2 api
+    class EXT external
+    class P process
+    class DB database
 ```
+
+### Key Data Flow Principles
+
+#### 1. **Single Entry Point**: All data requests go through Streamlit → FastAPI
+#### 2. **Event-Driven Processing**: Every upload/URL triggers immediate Prefect pipeline
+#### 3. **Persistent Storage**: File uploads stored in MinIO for audit and reprocessing
+#### 4. **Unified Processing**: Same Prefect workflow handles both upload and URL scenarios
+#### 5. **API-First Access**: All data visualization goes through FastAPI endpoints
+
+### Processing Timeline
+
+| Step | File Upload Path | URL Download Path | Duration |
+|------|------------------|-------------------|----------|
+| **1. Input** | User uploads Excel file | User enters NHS URL | 1-5 seconds |
+| **2. Storage** | File saved to MinIO | URL validated | 1-2 seconds |
+| **3. Pipeline** | Prefect retrieves from MinIO | Prefect downloads from URL | 5-30 seconds |
+| **4. Processing** | Excel parsing & transformation | Excel parsing & transformation | 10-60 seconds |
+| **5. Storage** | Data inserted into PostgreSQL | Data inserted into PostgreSQL | 2-10 seconds |
+| **6. Access** | Available via Dashboard API | Available via Dashboard API | <1 second |
 
 ### Data Transformation Flow
 
