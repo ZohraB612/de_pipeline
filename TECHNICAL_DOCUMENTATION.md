@@ -319,6 +319,9 @@ minio://uploaded-files/
 ├── nhs_uploads/                    # User uploaded files
 │   ├── 2025-07-13T20:25:04_{filename}.xlsx
 │   └── 2025-07-13T20:30:15_{filename}.xlsx
+├── url_downloads/                  # Files downloaded from URLs
+│   ├── 2025-07-13T20:30:45_Beds-Open-Overnight-Web_File-Q3-2023-24.xlsx
+│   └── 2025-07-13T20:35:12_NHS-Data-File.xlsx
 └── prefect-results/                # Pipeline artifacts
     ├── processed_data_summaries/
     └── execution_logs/

@@ -46,15 +46,36 @@ def download_data_task(url: str) -> str:
                 print(f"ERROR: Failed to download from MinIO: {e}")
                 raise
     else:
-        # Handle regular HTTP/HTTPS URLs
+        # Handle regular HTTP/HTTPS URLs - Download and save to MinIO
         print(f"Downloading from URL: {url}")
+        
+        # Create temporary file for download
         with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
             with httpx.stream("GET", url) as response:
                 response.raise_for_status()
                 for chunk in response.iter_bytes():
                     tmp.write(chunk)
+            
+            tmp_file_path = tmp.name
             print(f"SUCCESS: Downloaded file from {url}")
-            return tmp.name
+        
+        # Save downloaded file to MinIO for audit trail and reprocessing
+        try:
+            # Generate MinIO object name with timestamp and URL info
+            url_filename = url.split('/')[-1] if '/' in url else 'downloaded_file.xlsx'
+            object_name = f"url_downloads/{datetime.now().isoformat()}_{url_filename}"
+            
+            # Upload to MinIO
+            upload_file(minio_client, BUCKET_NAME, object_name, tmp_file_path)
+            print(f"SUCCESS: Saved URL download to MinIO as {object_name}")
+            
+            # Return the original temp file path for immediate processing
+            return tmp_file_path
+            
+        except Exception as e:
+            print(f"WARNING: Failed to save URL download to MinIO: {e}")
+            # Continue with processing even if MinIO save fails
+            return tmp_file_path
 
 @task
 def process_bed_occupancy_data_task(file_path: str) -> List[Dict[str, Any]]:
