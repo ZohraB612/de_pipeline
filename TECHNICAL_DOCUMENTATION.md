@@ -42,23 +42,27 @@ graph TB
         D[FastAPI Service]
     end
     
+    subgraph "Storage Layer"
+        H[MinIO Object Storage]
+    end
+    
     subgraph "Orchestration Layer"
         E[Prefect Server]
         F[Prefect Worker]
     end
     
-    subgraph "Data Layer"
+    subgraph "Database Layer"
         G[PostgreSQL Database]
-        H[MinIO Object Storage]
     end
     
     A --> C
     B --> C
     C --> D
+    D --> H
     D --> E
     E --> F
-    F --> G
     F --> H
+    F --> G
     D --> G
 ```
 
