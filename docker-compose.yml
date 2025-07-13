@@ -6,13 +6,14 @@ services:
     ports:
       - "5001:5000"
     environment:
-      # Use the service name for the Prefect API URL
       - PREFECT_API_URL=http://prefect-server:4200/api
       - DATABASE_URL=postgresql://user:password@db:5432/mydatabase
       - MINIO_URL=minio:9000
       - MINIO_ACCESS_KEY=minioadmin
       - MINIO_SECRET_KEY=minioadmin
       - FLOW_RUN_TIMEOUT=180
+    volumes:
+      - ./shared:/app/shared
     depends_on:
       prefect-server:
         condition: service_healthy
@@ -20,6 +21,13 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    healthcheck:
+      # Use python/requests for the healthcheck as curl is not in the base image
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/health', timeout=5).raise_for_status()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   # PostgreSQL Database Service
   db:
@@ -42,8 +50,8 @@ services:
   minio:
     image: minio/minio:latest
     ports:
-      - "9000:9000"   # MinIO API
-      - "9001:9001"   # MinIO Console
+      - "9000:9000"
+      - "9001:9001"
     environment:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin
@@ -63,22 +71,25 @@ services:
     ports:
       - "4200:4200"
     environment:
-      # --- FIX: Simplify to the correct environment variables ---
+      # Restore PREFECT_API_URL and set the database connection URL
       - PREFECT_API_URL=http://prefect-server:4200/api
       - PREFECT_API_DATABASE_CONNECTION_URL=postgresql+asyncpg://user:password@db:5432/mydatabase
     depends_on:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:4200/api/health', timeout=5)"]
-      interval: 30s
+      # Use python/requests for the healthcheck and add a start_period
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:4200/api/health', timeout=5).raise_for_status()"]
+      interval: 10s
       timeout: 10s
       retries: 10
+      start_period: 30s
 
   # Prefect Worker Service
   prefect-worker:
     build: ./prefect-worker
-    command: sh -c "python worker.py && prefect worker start --pool default"
+    # This command correctly creates the work pool before starting the worker
+    command: sh -c "prefect work-pool create 'default' --type process && python worker.py && prefect worker start --pool default"
     environment:
       - PREFECT_API_URL=http://prefect-server:4200/api
       - DATABASE_URL=postgresql://user:password@db:5432/mydatabase
@@ -104,7 +115,7 @@ services:
       - API_BASE_URL=http://api:5000
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - ./streamlit_app:/app
 
@@ -112,3 +123,4 @@ volumes:
   postgres_data:
   minio_data:
   prefect_data:
+
