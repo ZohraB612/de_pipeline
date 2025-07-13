@@ -67,10 +67,47 @@ graph TB
 | Component | PostgreSQL | MinIO | Prefect Server | FastAPI | Streamlit |
 |-----------|------------|-------|----------------|---------|-----------|
 | **PostgreSQL** | - | ❌ | ✅ | ✅ | ❌ |
-| **MinIO** | ❌ | - | ❌ | ✅ | ❌ |
+| **MinIO** | ❌ | - | ✅ | ✅ | ❌ |
 | **Prefect Server** | ✅ | ❌ | - | ✅ | ❌ |
 | **FastAPI** | ✅ | ✅ | ✅ | - | ❌ |
 | **Streamlit** | ❌ | ❌ | ❌ | ✅ | - |
+| **Prefect Worker** | ✅ | ✅ | ✅ | ❌ | ❌ |
+
+### Key Architectural Principles
+
+#### 1. **Event-Driven Data Processing**
+Every file upload or URL submission triggers an immediate Prefect pipeline execution, ensuring real-time data processing without manual intervention.
+
+#### 2. **MinIO-Centric Storage Strategy**
+- **All uploaded files persist in MinIO** before processing
+- **Timestamped file organization** enables audit trails and version control
+- **S3-compatible interface** provides cloud migration path
+- **Decoupled storage** from processing enables horizontal scaling
+
+#### 3. **Dual-Source Data Ingestion**
+```python
+# Unified processing for both sources
+if url.startswith("minio://"):
+    # Handle uploaded files from MinIO
+    process_uploaded_file(url)
+else:
+    # Handle external NHS URLs
+    process_external_url(url)
+```
+
+#### 4. **API-First Architecture**
+All data access flows through the FastAPI layer, providing:
+- Consistent data formatting and validation
+- Centralized authentication point (future)
+- Request/response logging and monitoring
+- Rate limiting and caching capabilities
+
+#### 5. **Containerized Microservices**
+Each component runs in isolation with defined interfaces, enabling:
+- Independent scaling and deployment
+- Technology stack flexibility
+- Fault isolation and recovery
+- Development team autonomy
 
 ---
 
@@ -125,14 +162,15 @@ graph TB
 
 ### 1. FastAPI Service (`/api`)
 
-**Purpose**: REST API gateway providing data pipeline management and database access
+**Purpose**: REST API gateway providing comprehensive data pipeline orchestration and access management
 
 **Key Responsibilities**:
-- Pipeline trigger management via Prefect integration
-- File upload handling with MinIO storage
-- Database query interface for processed data
-- Real-time pipeline status monitoring
-- Health check endpoints for service monitoring
+- **File Upload Orchestration**: Validates and stores Excel files in MinIO with automatic pipeline triggering
+- **URL-based Data Ingestion**: Handles external NHS data URLs with direct pipeline integration
+- **Pipeline Management**: Creates and monitors Prefect flow runs with real-time status tracking
+- **Database Access Layer**: Provides optimized queries for processed bed occupancy data
+- **MinIO Integration**: Manages object storage operations for uploaded files and artifacts
+- **Health Monitoring**: Comprehensive service health checks and system monitoring
 
 **Core Endpoints**:
 - `POST /nhs-data/trigger-pipeline`: Initiate data processing workflows
@@ -143,41 +181,79 @@ graph TB
 
 **Technical Implementation**:
 ```python
-# Key architectural patterns
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    # Request logging for debugging and monitoring
+# File Upload with MinIO Integration
+@app.post("/nhs-data/upload")
+async def upload_nhs_file(file: UploadFile = File(...)):
+    # 1. Validate file format
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Invalid file format")
     
+    # 2. Store in MinIO with timestamped path
+    object_name = f"nhs_uploads/{datetime.now().isoformat()}_{file.filename}"
+    upload_file(minio_client, BUCKET_NAME, object_name, tmp_file_path)
+    minio_url = f"minio://{BUCKET_NAME}/{object_name}"
+    
+    # 3. Trigger Prefect pipeline with MinIO reference
+    flow_run = await prefect_client.create_flow_run_from_deployment(
+        deployment_id=deployment.id,
+        parameters={"url": minio_url, "is_upload": True}
+    )
+    
+    return {"message": "File uploaded and pipeline started", 
+            "minio_path": object_name, "flow_run_id": str(flow_run.id)}
+
+# URL-based Pipeline Triggering
 @app.post("/nhs-data/trigger-pipeline")
 async def trigger_nhs_pipeline(trigger: PipelineTrigger):
-    # Async pipeline triggering with Prefect client
+    # Direct pipeline triggering for external URLs
+    flow_run = await prefect_client.create_flow_run_from_deployment(
+        deployment_id=deployment.id,
+        parameters={"url": trigger.url, "is_upload": False}
+    )
 ```
 
 ### 2. Prefect Worker (`/prefect-worker`)
 
-**Purpose**: Data processing engine executing ETL workflows
+**Purpose**: Intelligent data processing engine with dual-source ETL capabilities
 
 **Key Responsibilities**:
-- NHS Excel data download and ingestion
-- Data transformation and validation
-- Database persistence operations
-- Error handling and retry logic
-- Cloud storage integration
+- **Dual-Source Data Acquisition**: Seamlessly handles MinIO objects and external HTTP URLs
+- **Excel Processing Pipeline**: Advanced multi-header Excel parsing and transformation
+- **Data Quality Assurance**: Comprehensive validation and cleaning operations
+- **PostgreSQL Integration**: Optimized batch insertion with conflict resolution
+- **Error Resilience**: Robust retry logic and comprehensive error handling
+- **Artifact Management**: Results storage and pipeline audit trails
 
-**Workflow Definition**:
+**Intelligent Workflow Definition**:
 ```python
 @flow
 def nhs_bed_occupancy_pipeline_flow(url: str, is_upload: bool = False):
-    """Main ETL workflow for NHS bed occupancy data"""
-    file_path = download_data_task(url)
-    processed_data = process_data_task(file_path)
-    store_data_task(processed_data)
+    """
+    Unified ETL workflow supporting both MinIO and HTTP sources
+    
+    Parameters:
+    - url: Either 'minio://bucket/object' or 'https://external-url'
+    - is_upload: Boolean flag indicating upload vs download scenario
+    """
+    file_path = download_data_task(url)           # Smart source detection
+    processed_data = process_bed_occupancy_data_task(file_path)  # Excel processing
+    store_bed_occupancy_data_task(processed_data) # Database persistence
 ```
 
-**Data Processing Pipeline**:
-1. **Download Task**: Handles both HTTP URLs and MinIO object retrieval
-2. **Process Task**: Excel parsing, data cleaning, and transformation
-3. **Store Task**: Database persistence with conflict resolution
+**Smart Data Processing Pipeline**:
+1. **Intelligent Download Task**: 
+   - **MinIO Mode**: Retrieves uploaded files from object storage
+   - **HTTP Mode**: Downloads directly from external NHS URLs
+   - **Format Detection**: Automatic Excel format handling
+2. **Advanced Process Task**: 
+   - Multi-header Excel parsing with `openpyxl`
+   - Column mapping and normalization
+   - Data validation and quality checks
+   - Occupancy rate calculations
+3. **Optimized Store Task**: 
+   - Batch PostgreSQL insertion
+   - Duplicate detection and handling
+   - Transaction management and rollback support
 
 ### 3. Prefect Server (`/prefect-server`)
 
@@ -224,13 +300,45 @@ def nhs_bed_occupancy_pipeline_flow(url: str, is_upload: bool = False):
 
 ### 6. MinIO Object Storage (`/minio`)
 
-**Purpose**: S3-compatible object storage for file management
+**Purpose**: Centralized S3-compatible object storage serving as the data lake foundation
+
+**Strategic Role in Data Architecture**:
+- **Upload Storage Hub**: Primary storage for all user-uploaded Excel files
+- **Data Lake Foundation**: Persistent storage for raw data artifacts
+- **Pipeline Integration**: Seamless integration with Prefect workflows
+- **Audit Trail**: Complete history of processed files with timestamp tracking
+- **Scalability**: S3-compatible interface enables cloud migration readiness
+
+**Storage Organization**:
+```
+minio://uploaded-files/
+├── nhs_uploads/                    # User uploaded files
+│   ├── 2025-07-13T20:25:04_{filename}.xlsx
+│   └── 2025-07-13T20:30:15_{filename}.xlsx
+└── prefect-results/                # Pipeline artifacts
+    ├── processed_data_summaries/
+    └── execution_logs/
+```
 
 **Configuration**:
-- API Port: `9000` (S3-compatible operations)
-- Console Port: `9001` (Web management interface)
-- Default Credentials: `minioadmin:minioadmin`
-- Persistent Storage: Docker volume `minio_data`
+- **API Port**: `9000` (S3-compatible operations)
+- **Console Port**: `9001` (Web management interface)
+- **Default Credentials**: `minioadmin:minioadmin` (production: use secrets)
+- **Persistent Storage**: Docker volume `minio_data`
+- **Bucket Strategy**: Segregated buckets for uploads and results
+
+**Integration Pattern**:
+```python
+# File upload flow
+object_name = f"nhs_uploads/{datetime.now().isoformat()}_{file.filename}"
+upload_file(minio_client, BUCKET_NAME, object_name, tmp_file_path)
+minio_url = f"minio://{BUCKET_NAME}/{object_name}"
+
+# Prefect worker retrieval
+if url.startswith("minio://"):
+    bucket_name, object_path = parse_minio_url(url)
+    minio_client.fget_object(bucket_name, object_path, local_file_path)
+```
 
 ---
 
@@ -238,64 +346,156 @@ def nhs_bed_occupancy_pipeline_flow(url: str, is_upload: bool = False):
 
 ### End-to-End Data Pipeline
 
+The platform implements a robust, event-driven data pipeline where **all data flows through MinIO storage** before processing, ensuring data persistence, traceability, and scalable processing capabilities.
+
+#### File Upload Data Flow
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant S as Streamlit
+    participant S as Streamlit App
+    participant API as FastAPI
+    participant M as MinIO Storage
+    participant PS as Prefect Server
+    participant PW as Prefect Worker
+    participant DB as PostgreSQL
+
+    Note over U,DB: File Upload Scenario
+    U->>S: Upload Excel File (.xlsx/.xls)
+    S->>API: POST /nhs-data/upload
+    Note over API: Validate file format
+    API->>M: Store file in MinIO (nhs_uploads/)
+    M-->>API: File stored (minio://bucket/path)
+    API->>PS: Trigger pipeline with MinIO URL
+    PS->>PW: Execute workflow with MinIO reference
+    
+    Note over PW: Data Processing Phase
+    PW->>M: Download file from MinIO storage
+    M-->>PW: Excel file data
+    PW->>PW: Parse Excel & transform data
+    PW->>PW: Validate & clean data
+    PW->>DB: Batch insert processed records
+    DB-->>PW: Insert confirmation
+    PW-->>PS: Workflow completed successfully
+    PS-->>API: Flow run status update
+    API-->>S: Success response with flow ID
+    S-->>U: Upload confirmation + pipeline status
+```
+
+#### URL Download Data Flow
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant S as Streamlit App
     participant API as FastAPI
     participant PS as Prefect Server
     participant PW as Prefect Worker
-    participant M as MinIO
+    participant EXT as External NHS Source
     participant DB as PostgreSQL
+
+    Note over U,DB: URL Download Scenario
+    U->>S: Enter NHS Data URL
+    S->>API: POST /nhs-data/trigger-pipeline
+    Note over API: Validate URL format
+    API->>PS: Trigger pipeline with external URL
+    PS->>PW: Execute workflow with URL reference
     
-    U->>S: Upload URL/File
-    S->>API: POST /trigger-pipeline
-    API->>PS: Create Flow Run
-    PS->>PW: Execute Workflow
+    Note over PW: Data Acquisition & Processing
+    PW->>EXT: Download Excel file from NHS URL
+    EXT-->>PW: Excel file data
+    PW->>PW: Parse Excel & transform data
+    PW->>PW: Validate & clean data
+    PW->>DB: Batch insert processed records
+    DB-->>PW: Insert confirmation
+    PW-->>PS: Workflow completed successfully
+    PS-->>API: Flow run status update
+    API-->>S: Success response with flow ID
+    S-->>U: Download confirmation + pipeline status
+```
+
+#### Data Access Flow
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant S as Streamlit App
+    participant API as FastAPI
+    participant DB as PostgreSQL
+
+    Note over U,DB: Data Visualization & Analytics
+    U->>S: Access Dashboard
+    S->>API: GET /nhs-data/occupancy
+    API->>DB: Query processed bed occupancy data
+    DB-->>API: Return formatted records
+    API-->>S: JSON response with data
+    S->>S: Generate interactive visualizations
+    S-->>U: Rendered charts & analytics
     
-    alt File Upload
-        PW->>M: Store Uploaded File
-        M-->>PW: File Stored
-    end
-    
-    PW->>PW: Download & Process Data
-    PW->>DB: Insert Processed Records
-    DB-->>PW: Confirmation
-    PW-->>PS: Workflow Complete
-    PS-->>API: Status Update
-    API-->>S: Success Response
-    S-->>U: Pipeline Triggered
-    
-    U->>S: View Dashboard
-    S->>API: GET /occupancy
-    API->>DB: Query Data
-    DB-->>API: Return Records
-    API-->>S: JSON Response
-    S-->>U: Rendered Visualizations
+    Note over U,S: Real-time Pipeline Monitoring
+    U->>S: Check Pipeline Status
+    S->>API: GET /nhs-data/status/{flow_run_id}
+    API->>PS: Query flow run status
+    PS-->>API: Return execution details
+    API-->>S: Status information
+    S-->>U: Pipeline execution status
 ```
 
 ### Data Transformation Flow
 
-1. **Data Ingestion**:
-   - Source: NHS Excel files (HTTPS URLs or direct uploads)
-   - Format: `.xlsx` or `.xls` files
-   - Storage: Temporary local processing, permanent MinIO storage
+#### 1. **Data Ingestion & Storage**
+- **Source Types**: 
+  - **File Uploads**: User-uploaded Excel files via Streamlit interface
+  - **URL Downloads**: Direct NHS data URLs for automated processing
+- **Format Support**: `.xlsx` and `.xls` Excel files with multi-header structure
+- **Storage Strategy**: 
+  - **File Uploads**: Immediate storage in MinIO (`nhs_uploads/` prefix)
+  - **URL Downloads**: Direct processing without intermediate storage
+  - **MinIO URL Format**: `minio://uploaded-files/nhs_uploads/{timestamp}_{filename}`
 
-2. **Data Processing**:
-   - Excel parsing using `openpyxl`
-   - Data cleaning and validation
-   - Schema normalization
-   - Occupancy rate calculations
+#### 2. **Event-Driven Pipeline Triggering**
+```python
+# File Upload Flow
+object_name = f"nhs_uploads/{datetime.now().isoformat()}_{file.filename}"
+upload_file(minio_client, BUCKET_NAME, object_name, tmp_file_path)
+minio_url = f"minio://{BUCKET_NAME}/{object_name}"
 
-3. **Data Persistence**:
-   - PostgreSQL insertion with conflict resolution
-   - Batch processing for performance optimization
-   - Transaction management for data integrity
+# Trigger Prefect pipeline with MinIO reference
+flow_run = await prefect_client.create_flow_run_from_deployment(
+    deployment_id=deployment.id,
+    parameters={"url": minio_url, "is_upload": True}
+)
+```
 
-4. **Data Access**:
-   - RESTful API endpoints
-   - Real-time query capabilities
-   - Filtering and aggregation support
+#### 3. **Intelligent Data Acquisition**
+The Prefect worker handles both data sources seamlessly:
+```python
+@task
+def download_data_task(url: str) -> str:
+    if url.startswith("minio://"):
+        # MinIO retrieval for uploaded files
+        minio_client.fget_object(bucket_name, object_name, local_path)
+    else:
+        # HTTP download for external URLs
+        httpx.stream("GET", url)
+```
+
+#### 4. **Data Processing & Transformation**
+- **Excel Parsing**: Multi-header Excel files using `openpyxl` engine
+- **Data Cleaning**: Column normalization and missing value handling
+- **Schema Validation**: Ensures data consistency before database insertion
+- **Occupancy Rate Calculation**: Automated calculation of bed utilization metrics
+- **Data Quality Checks**: Validation of numerical constraints and data integrity
+
+#### 5. **Persistent Data Storage**
+- **Database**: PostgreSQL with optimized schema for analytics
+- **Batch Processing**: Efficient bulk insertion for performance
+- **Conflict Resolution**: Handles duplicate data scenarios gracefully
+- **Transaction Management**: ACID compliance for data integrity
+- **Indexing Strategy**: Optimized indexes for query performance
+
+#### 6. **Real-time Data Access**
+- **API Gateway**: FastAPI with async processing capabilities
+- **Query Optimization**: Efficient database queries with filtering support
+- **Response Formatting**: JSON serialization for frontend consumption
+- **Caching Strategy**: Ready for Redis integration for performance enhancement
 
 ---
 
