@@ -46,29 +46,64 @@ prefect_client = PrefectClient(api=PREFECT_API_URL)
 @app.post("/nhs-data/trigger-pipeline")
 async def trigger_nhs_pipeline(trigger: PipelineTrigger):
     """
-    Triggers the NHS data processing pipeline and returns immediately with flow run details.
+    Downloads file from URL, saves to MinIO, then triggers pipeline with MinIO path.
+    This ensures ALL data flows through MinIO storage consistently.
     """
     print("--- Endpoint /nhs-data/trigger-pipeline HIT ---")
     try:
-        # NOTE: The deployment name is now just the flow name, as defined in worker.py
+        # Step 1: Download file from URL and save to MinIO
+        print(f"Downloading file from URL: {trigger.url}")
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(trigger.url)
+            response.raise_for_status()
+            
+            # Extract filename from URL
+            url_filename = trigger.url.split('/')[-1] if '/' in trigger.url else 'downloaded_file.xlsx'
+            if not url_filename.endswith(('.xlsx', '.xls')):
+                url_filename += '.xlsx'
+            
+            # Create timestamped object name
+            object_name = f"url_downloads/{datetime.now().isoformat()}_{url_filename}"
+            
+            # Save to temporary file then upload to MinIO
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_file:
+                tmp_file.write(response.content)
+                tmp_file_path = tmp_file.name
+            
+            # Upload to MinIO
+            upload_file(minio_client, BUCKET_NAME, object_name, tmp_file_path)
+            minio_url = f"minio://{BUCKET_NAME}/{object_name}"
+            print(f"SUCCESS: Downloaded and saved to MinIO as {object_name}")
+            
+            # Clean up temp file
+            os.unlink(tmp_file_path)
+        
+        # Step 2: Trigger Prefect pipeline with MinIO URL (consistent with file uploads)
         deployment = await prefect_client.read_deployment_by_name("nhs-bed-occupancy-pipeline-flow/Data Pipeline Flow")
         
         flow_run = await prefect_client.create_flow_run_from_deployment(
             deployment_id=deployment.id,
-            parameters={"url": trigger.url, "is_upload": False}
+            parameters={"url": minio_url, "is_upload": False}  # Now uses MinIO URL!
         )
         
         print(f"SUCCESS: Created flow run '{flow_run.name}' (ID: {flow_run.id})")
         return {
-            "message": "Pipeline started successfully",
+            "message": "File downloaded to MinIO and pipeline started successfully",
+            "original_url": trigger.url,
+            "minio_path": object_name,
             "flow_run_id": str(flow_run.id),
             "flow_run_name": flow_run.name,
             "status_url": f"/nhs-data/status/{flow_run.id}"
         }
+        
+    except httpx.HTTPError as e:
+        print(f"ERROR: Failed to download from URL {trigger.url}: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to download file from URL: {str(e)}")
     except ObjectNotFound:
          raise HTTPException(status_code=404, detail="Deployment 'nhs-bed-occupancy-pipeline-flow/Data Pipeline Flow' not found. Please wait for the worker to initialize.")
     except Exception as e:
-        print(f"ERROR: Could not trigger pipeline. Reason: {e}")
+        print(f"ERROR: Could not download file and trigger pipeline. Reason: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
