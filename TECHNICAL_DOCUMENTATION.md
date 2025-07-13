@@ -42,24 +42,46 @@ graph TB
         D[FastAPI Service]
     end
     
+    subgraph "Storage Layer"
+        H[MinIO Object Storage]
+    end
+    
     subgraph "Orchestration Layer"
         E[Prefect Server]
         F[Prefect Worker]
     end
     
-    subgraph "Data Layer"
+    subgraph "Database Layer"
         G[PostgreSQL Database]
-        H[MinIO Object Storage]
     end
     
+    %% Data Ingestion Flow
     A --> C
     B --> C
     C --> D
+    
+    %% File Upload Storage Flow
+    D -->|Store Uploaded Files| H
+    
+    %% Pipeline Triggering Flow
     D --> E
     E --> F
-    F --> G
-    F --> H
-    D --> G
+    
+    %% Data Processing Flow
+    F -->|Retrieve Files| H
+    F -->|Download URLs| A
+    F -->|Store Processed Data| G
+    
+    %% Data Access Flow
+    D -->|Query Data| G
+    
+    %% Styling
+    classDef storage fill:#e1f5fe
+    classDef processing fill:#f3e5f5
+    classDef data fill:#e8f5e8
+    class H storage
+    class E,F processing
+    class G data
 ```
 
 ### Component Interaction Matrix
