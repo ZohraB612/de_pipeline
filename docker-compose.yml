@@ -1,7 +1,7 @@
 services:
   # FastAPI Application Service
   api:
-    build: ./api
+    build: ./services/api
     command: uvicorn app:app --host 0.0.0.0 --port 5001 --reload
     ports:
       - "5001:5001"
@@ -13,7 +13,7 @@ services:
       - MINIO_SECRET_KEY=minioadmin
       - FLOW_RUN_TIMEOUT=180
     volumes:
-      - ./api:/app
+      - ./services/api:/app
       - ./shared:/app/shared
     depends_on:
       prefect-server:
@@ -66,7 +66,7 @@ services:
 
   # Prefect Server
   prefect-server:
-    build: ./prefect-server
+    build: ./services/prefect-server
     command: prefect server start --host 0.0.0.0
     ports:
       - "4200:4200"
@@ -87,7 +87,7 @@ services:
 
   # Prefect Worker Service
   prefect-worker:
-    build: ./prefect-worker
+    build: ./services/prefect-worker
     command: sh -c "prefect work-pool create 'default' --type process || true && prefect worker start --pool 'default'"
     environment:
       - PREFECT_API_URL=http://prefect-server:4200/api
@@ -103,18 +103,18 @@ services:
       minio:
         condition: service_healthy
     volumes:
-      - ./prefect-worker:/app # <-- ADD THIS LINE
+      - ./services/prefect-worker:/app
       - ./shared:/app/shared
 
   # Streamlit Frontend Service
   streamlit:
-    build: ./streamlit_app
+    build: ./services/streamlit
     ports:
       - "8501:8501"
     environment:
       - API_BASE_URL=http://api:5001
     volumes:
-      - ./streamlit_app:/app # <-- ADD THIS LINE
+      - ./services/streamlit:/app
     depends_on:
       api:
         condition: service_healthy
