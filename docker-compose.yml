@@ -2,7 +2,7 @@ services:
   # FastAPI Application Service
   api:
     build: ./services/api
-    command: uvicorn app:app --host 0.0.0.0 --port 5001 --reload
+    command: uvicorn server:app --host 0.0.0.0 --port 5001 --reload
     ports:
       - "5001:5001"
     environment:
@@ -88,7 +88,7 @@ services:
   # Prefect Worker Service
   prefect-worker:
     build: ./services/prefect-worker
-    command: sh -c "prefect work-pool create 'default' --type process || true && prefect worker start --pool 'default'"
+    command: sh -c "prefect work-pool create 'default' --type process || true && python worker.py && prefect worker start --pool 'default'"
     environment:
       - PREFECT_API_URL=http://prefect-server:4200/api
       - DATABASE_URL=postgresql://user:password@db:5432/mydatabase
@@ -123,4 +123,3 @@ volumes:
   postgres_data:
   minio_data:
   prefect_data:
-
